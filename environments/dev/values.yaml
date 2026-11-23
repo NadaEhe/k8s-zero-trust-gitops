@@ -4,7 +4,7 @@
 environment: dev
 
 image:
-  tag: "1.0.0"
+  tag: "sha-c16eeb0"
 
 replicaCount: 2
 logLevel: DEBUG
