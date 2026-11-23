@@ -1,0 +1,128 @@
+{{- if .Values.postgresql.enabled }}
+# PostgreSQL as a StatefulSet: stable network identity and one PersistentVolume
+# per replica that survives pod restarts. (In production you would rather use a
+# managed database or an operator such as CloudNativePG.)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "taskapi.dbname" . }}
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+    {{- include "taskapi.dbSelectorLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "taskapi.dbSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: postgresql
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "taskapi.dbname" . }}-headless
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+    {{- include "taskapi.dbSelectorLabels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "taskapi.dbSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: postgresql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "taskapi.dbname" . }}
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+    {{- include "taskapi.dbSelectorLabels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "taskapi.dbname" . }}-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "taskapi.dbSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "taskapi.labels" . | nindent 8 }}
+        {{- include "taskapi.dbSelectorLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      # The official image's "postgres" user is UID/GID 999. Running as that
+      # user (never root) satisfies the "restricted" Pod Security Standard.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: postgresql
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: postgresql
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.database.name | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.database.user | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret }}
+                  key: {{ .Values.database.passwordKey }}
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", {{ .Values.database.user | quote }}, "-d", {{ .Values.database.name | quote }}]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", {{ .Values.database.user | quote }}, "-d", {{ .Values.database.name | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          volumeMounts:
+            # Since PostgreSQL 18 the official image keeps its data under /var/lib/postgresql.
+            - name: data
+              mountPath: /var/lib/postgresql
+            # Writable scratch dirs, because the root filesystem is read-only.
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.postgresql.storage.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgresql.storage.size }}
+{{- end }}

@@ -1,0 +1,50 @@
+# AppProjects = guardrails for Argo CD itself (least privilege for deployments).
+#
+# "taskapi" can ONLY deploy from this repository, ONLY into taskapi-* namespaces,
+# and ONLY namespaced resources: even a bad commit in the app chart cannot
+# create a ClusterRole or touch kube-system.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: taskapi
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  description: Application workloads (dev and prod)
+  sourceRepos:
+    - https://github.com/NadaEhe/k8s-zero-trust-gitops.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: taskapi-*
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+# "platform" deploys shared infrastructure (monitoring, gateway, metrics-server).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  description: Shared platform components
+  sourceRepos:
+    - https://github.com/NadaEhe/k8s-zero-trust-gitops.git
+    - https://prometheus-community.github.io/helm-charts
+    - https://kubernetes-sigs.github.io/metrics-server/
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: monitoring
+    - server: https://kubernetes.default.svc
+      namespace: kube-system
+    - server: https://kubernetes.default.svc
+      namespace: gateway-system
+    - server: https://kubernetes.default.svc
+      namespace: argocd
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"

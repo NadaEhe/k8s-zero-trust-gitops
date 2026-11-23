@@ -1,0 +1,12 @@
+TaskAPI {{ include "taskapi.imageTag" . }} deployed to namespace "{{ .Release.Namespace }}" ({{ .Values.environment }}).
+{{- if .Values.gateway.enabled }}
+
+Try it (through the shared Gateway):
+  curl http://{{ .Values.gateway.hostname }}:8080/api/info
+  curl -X POST http://{{ .Values.gateway.hostname }}:8080/api/tasks -H 'content-type: application/json' -d '{"title":"hello"}'
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+
+Zero-trust check (should be denied with 403 by Cilium, not by the app):
+  curl -i -X PUT http://{{ .Values.gateway.hostname }}:8080/api/tasks/1
+{{- end }}

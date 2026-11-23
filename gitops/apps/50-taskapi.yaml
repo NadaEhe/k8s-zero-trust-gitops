@@ -1,0 +1,54 @@
+# The application, once per environment. Same chart, different values file.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: taskapi-dev
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: taskapi
+  source:
+    repoURL: https://github.com/NadaEhe/k8s-zero-trust-gitops.git
+    targetRevision: main
+    path: charts/taskapi
+    helm:
+      releaseName: taskapi
+      valueFiles:
+        - ../../environments/dev/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: taskapi-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true   # any manual `kubectl edit` is reverted to what Git says
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: taskapi-prod
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: taskapi
+  source:
+    repoURL: https://github.com/NadaEhe/k8s-zero-trust-gitops.git
+    targetRevision: main
+    path: charts/taskapi
+    helm:
+      releaseName: taskapi
+      valueFiles:
+        - ../../environments/prod/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: taskapi-prod
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

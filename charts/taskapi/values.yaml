@@ -1,0 +1,123 @@
+# Default values for the taskapi chart.
+# Environment-specific overrides live in environments/<env>/values.yaml.
+
+# -- Short environment name, exposed to the app and used in alert labels.
+environment: dev
+
+image:
+  repository: ghcr.io/nadaehe/k8s-zero-trust-gitops/taskapi
+  # -- Image tag. CI writes the commit tag here (GitOps): never use "latest".
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+# -- Rolling update: never go below the desired replica count during a deploy.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+logLevel: INFO
+
+service:
+  port: 80
+  containerPort: 8000
+  metricsPort: 9090
+
+# -- Expose the API through the shared Gateway (Gateway API HTTPRoute).
+gateway:
+  enabled: true
+  hostname: taskapi-dev.localtest.me
+  parentRef:
+    name: shared-gateway
+    namespace: gateway-system
+    sectionName: http
+
+# -- Credentials come from an existing Secret (created at bootstrap, never stored in Git).
+database:
+  name: taskapi
+  user: taskapi
+  existingSecret: taskapi-db
+  passwordKey: password
+  pool:
+    min: 1
+    max: 5
+
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "18.7-trixie"
+    pullPolicy: IfNotPresent
+  storage:
+    size: 1Gi
+    # -- Empty = the cluster's default StorageClass.
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+# -- Zero-trust networking. Requires Cilium (CiliumNetworkPolicy CRD).
+networkPolicy:
+  enabled: true
+  # -- Namespace where Prometheus runs (allowed to scrape the metrics port only).
+  monitoringNamespace: monitoring
+  # -- Layer-7 filtering: only these HTTP method/path pairs may come in through the Gateway.
+  #    Paths are regular expressions matched against the full path.
+  allowedHttp:
+    - method: GET
+      path: "/api/(info|tasks|docs|openapi\\.json)$"
+    - method: GET
+      path: "/api/tasks/[0-9]+$"
+    - method: POST
+      path: "/api/tasks$"
+    - method: PATCH
+      path: "/api/tasks/[0-9]+$"
+    - method: DELETE
+      path: "/api/tasks/[0-9]+$"
+
+monitoring:
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+  prometheusRule:
+    enabled: true
+    # -- Alert when more than this share of requests fail with 5xx (over 5 minutes).
+    errorRateThreshold: 0.05
+    # -- Alert when p95 latency is above this many seconds (over 10 minutes).
+    latencyP95Seconds: 0.5
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

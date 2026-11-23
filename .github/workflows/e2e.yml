@@ -1,0 +1,103 @@
+# End-to-end test on a REAL Kubernetes cluster, created inside the CI runner:
+# kind + Cilium (kube-proxy replacement, Gateway API) + the Helm chart.
+# Then the same test scripts you run locally: functional + zero-trust checks.
+name: E2E
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "environments/**"   # tag bumps are tested by the commit that built the image
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: kind + Cilium · functional & zero-trust tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load pinned versions
+        run: grep -E '^[A-Z_]+=' scripts/versions.env >> "$GITHUB_ENV"
+
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Create kind cluster (no CNI, no kube-proxy)
+        uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+        with:
+          version: ${{ env.KIND_VERSION }}
+          config: cluster/kind-config.yaml
+          cluster_name: ${{ env.CLUSTER_NAME }}
+          wait: 0s   # nodes only become Ready once Cilium is installed
+
+      - name: Build the API image and load it into the cluster
+        run: |
+          docker build -t ghcr.io/nadaehe/k8s-zero-trust-gitops/taskapi:e2e --build-arg APP_VERSION=e2e app
+          kind load docker-image ghcr.io/nadaehe/k8s-zero-trust-gitops/taskapi:e2e --name "$CLUSTER_NAME"
+
+      - name: Bootstrap platform (namespaces, CRDs, Cilium, secrets)
+        env:
+          SKIP_CLUSTER: "true"
+          SKIP_ARGOCD: "true"
+        run: ./scripts/bootstrap.sh
+
+      - name: Deploy the shared Gateway
+        run: |
+          kubectl apply -f gitops/platform/gateway/gateway.yaml
+          kubectl -n gateway-system wait --for=condition=Programmed gateway/shared-gateway --timeout=180s
+
+      - name: Install the chart (dev values, locally built image)
+        run: |
+          helm install taskapi charts/taskapi -n taskapi-dev \
+            -f environments/dev/values.yaml --set image.tag=e2e \
+            --wait --timeout 6m
+          kubectl -n taskapi-dev get pods,svc,httproute,ciliumnetworkpolicies,networkpolicies
+
+      - name: Functional + L7 policy tests (through the Gateway)
+        run: ./scripts/smoke-test.sh dev
+
+      - name: Network policy tests (lateral movement + egress lockdown)
+        run: ./scripts/policy-test.sh taskapi-dev
+
+      - name: Self-healing test (kill a pod, API keeps answering)
+        run: |
+          POD="$(kubectl -n taskapi-dev get pod -l app.kubernetes.io/component=api -o jsonpath='{.items[0].metadata.name}')"
+          kubectl -n taskapi-dev delete pod "$POD" --wait=false
+          # The other replica keeps serving while Kubernetes replaces the deleted one.
+          for i in $(seq 1 20); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: taskapi-dev.localtest.me' http://127.0.0.1:8080/api/info)"
+            [[ "$code" == "200" ]] || { echo "request $i failed with $code"; exit 1; }
+            sleep 0.5
+          done
+          kubectl -n taskapi-dev wait deploy/taskapi --for=jsonpath='{.status.readyReplicas}'=2 --timeout=120s
+          echo "Pod $POD was replaced, 20/20 requests succeeded during the replacement."
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set +e
+          kubectl get nodes -o wide
+          kubectl get pods -A -o wide
+          kubectl -n taskapi-dev describe pods
+          kubectl -n taskapi-dev logs -l app.kubernetes.io/component=api --tail=100
+          kubectl -n taskapi-dev logs -l app.kubernetes.io/component=database --tail=100
+          kubectl -n gateway-system describe gateway shared-gateway
+          kubectl -n taskapi-dev describe httproute
+          kubectl -n kube-system exec ds/cilium -- cilium-dbg status --verbose
+          kubectl -n kube-system exec ds/cilium -- hubble observe --last 200 --namespace taskapi-dev
+          kubectl get events -A --sort-by=.lastTimestamp | tail -80

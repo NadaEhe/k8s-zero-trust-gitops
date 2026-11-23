@@ -1,0 +1,40 @@
+# Values for the PROD environment (namespace taskapi-prod).
+# image.tag only changes through the "Promote to prod" workflow, which copies
+# the tag that is already running and tested in dev. Same image, no rebuild.
+environment: prod
+
+image:
+  tag: "1.0.0"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+database:
+  pool:
+    min: 2
+    max: 10
+
+postgresql:
+  storage:
+    size: 2Gi
+
+gateway:
+  hostname: taskapi.localtest.me
+
+monitoring:
+  prometheusRule:
+    errorRateThreshold: 0.01

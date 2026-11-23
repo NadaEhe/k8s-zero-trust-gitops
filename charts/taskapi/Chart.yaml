@@ -1,0 +1,11 @@
+apiVersion: v2
+name: taskapi
+description: TaskAPI + PostgreSQL with zero-trust Cilium network policies, Gateway API routing and Prometheus monitoring
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.33.0-0"
+keywords: [fastapi, postgresql, cilium, gateway-api, prometheus]
+maintainers:
+  - name: Neda Bousba
+    url: https://github.com/NadaEhe

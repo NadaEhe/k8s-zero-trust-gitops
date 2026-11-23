@@ -1,0 +1,13 @@
+# Values for the DEV environment (namespace taskapi-dev).
+# The CI pipeline updates image.tag automatically after every successful build of main:
+# that commit IS the deployment (GitOps). Argo CD notices it and syncs.
+environment: dev
+
+image:
+  tag: "1.0.0"
+
+replicaCount: 2
+logLevel: DEBUG
+
+gateway:
+  hostname: taskapi-dev.localtest.me

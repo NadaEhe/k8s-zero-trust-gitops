@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+rendered/
+*.sarif
+.env
+kubeconfig*
+.DS_Store
+.idea/
+.vscode/

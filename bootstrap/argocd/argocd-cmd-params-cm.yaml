@@ -1,0 +1,9 @@
+# TLS is terminated... nowhere, on purpose: this is a local lab served over plain
+# HTTP through the Gateway. "server.insecure" makes the Argo CD UI serve HTTP so
+# the Gateway can proxy it. In production: HTTPS listener with cert-manager.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+data:
+  server.insecure: "true"

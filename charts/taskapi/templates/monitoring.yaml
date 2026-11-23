@@ -1,0 +1,72 @@
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+# ServiceMonitor: tells the Prometheus Operator to scrape the API metrics port.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "taskapi.fullname" . }}
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "taskapi.apiSelectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+{{- end }}
+{{- if .Values.monitoring.prometheusRule.enabled }}
+{{- $ns := .Release.Namespace }}
+{{- $svc := include "taskapi.fullname" . }}
+---
+# PrometheusRule: alerting rules evaluated by Prometheus, routed by Alertmanager.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "taskapi.fullname" . }}
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+spec:
+  groups:
+    - name: taskapi.{{ $ns }}
+      rules:
+        - record: taskapi:http_requests:rate5m
+          expr: sum by (namespace, status) (rate(http_requests_total{namespace="{{ $ns }}", service="{{ $svc }}"}[5m]))
+
+        - alert: TaskApiDown
+          expr: absent(up{namespace="{{ $ns }}", service="{{ $svc }}"} == 1)
+          for: 2m
+          labels:
+            severity: critical
+            environment: {{ .Values.environment }}
+          annotations:
+            summary: "No TaskAPI pod is being scraped successfully in {{ $ns }}"
+            runbook_url: "https://github.com/NadaEhe/k8s-zero-trust-gitops/blob/main/docs/runbook.md#taskapidown"
+
+        - alert: TaskApiHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{namespace="{{ $ns }}", service="{{ $svc }}", status=~"5.."}[5m]))
+              /
+            sum(rate(http_requests_total{namespace="{{ $ns }}", service="{{ $svc }}"}[5m]))
+              > {{ .Values.monitoring.prometheusRule.errorRateThreshold }}
+          for: 5m
+          labels:
+            severity: warning
+            environment: {{ .Values.environment }}
+          annotations:
+            summary: "TaskAPI 5xx error ratio above {{ .Values.monitoring.prometheusRule.errorRateThreshold }} in {{ $ns }}"
+            runbook_url: "https://github.com/NadaEhe/k8s-zero-trust-gitops/blob/main/docs/runbook.md#taskapihigherrorrate"
+
+        - alert: TaskApiHighLatencyP95
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (rate(http_request_duration_seconds_bucket{namespace="{{ $ns }}", service="{{ $svc }}"}[5m]))
+            ) > {{ .Values.monitoring.prometheusRule.latencyP95Seconds }}
+          for: 10m
+          labels:
+            severity: warning
+            environment: {{ .Values.environment }}
+          annotations:
+            summary: "TaskAPI p95 latency above {{ .Values.monitoring.prometheusRule.latencyP95Seconds }}s in {{ $ns }}"
+            runbook_url: "https://github.com/NadaEhe/k8s-zero-trust-gitops/blob/main/docs/runbook.md#taskapihighlatencyp95"
+{{- end }}

@@ -1,0 +1,125 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $ns := .Release.Namespace }}
+# =============================================================================
+# Zero-trust network model for this namespace
+#
+#   Internet --> [Cilium Gateway / Envoy] --L7 allow-list--> api :8000
+#   Prometheus (monitoring ns) -------------------------------> api :9090
+#   api ------------------------------------------------------> postgresql :5432
+#   api ------------------------------------------------------> kube-dns :53
+#   EVERYTHING ELSE IS DENIED (in and out), including pod -> internet.
+#
+# Kubelet health probes come from the node itself ("host" entity), which
+# Cilium always allows, so probes keep working.
+# =============================================================================
+
+# 1) Default deny: a standard Kubernetes NetworkPolicy that selects every pod
+#    in the namespace and allows nothing. Policies are additive (allow-lists),
+#    so each rule below punches one precise hole.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# 2) API ingress.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "taskapi.fullname" . }}-ingress
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+spec:
+  description: "API: only the Gateway (filtered at L7) and Prometheus (metrics port) may connect"
+  endpointSelector:
+    matchLabels:
+      {{- include "taskapi.apiSelectorLabels" . | nindent 6 }}
+  ingress:
+    # 2a) From the Gateway. "ingress" is the identity Cilium gives to its Envoy
+    #     proxy. The HTTP rules are enforced by Envoy: any other method/path
+    #     gets "403 Access denied" before reaching the application.
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: {{ .Values.service.containerPort | quote }}
+              protocol: TCP
+          rules:
+            http:
+              {{- range .Values.networkPolicy.allowedHttp }}
+              - method: {{ .method | quote }}
+                path: {{ .path | quote }}
+              {{- end }}
+    # 2b) From Prometheus, metrics port only.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ .Values.networkPolicy.monitoringNamespace }}
+            app.kubernetes.io/name: prometheus
+      toPorts:
+        - ports:
+            - port: {{ .Values.service.metricsPort | quote }}
+              protocol: TCP
+---
+# 3) API egress: DNS (with DNS visibility in Hubble) and PostgreSQL. Nothing else,
+#    so a compromised API pod cannot reach other namespaces or the internet.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "taskapi.fullname" . }}-egress
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+spec:
+  description: "API: may only resolve DNS and talk to its own PostgreSQL"
+  endpointSelector:
+    matchLabels:
+      {{- include "taskapi.apiSelectorLabels" . | nindent 6 }}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              # Only service names of THIS namespace can be resolved
+              # ("*" matches exactly one DNS label, e.g. taskapi-postgresql).
+              - matchPattern: "*.{{ $ns }}.svc.cluster.local"
+    - toEndpoints:
+        - matchLabels:
+            {{- include "taskapi.dbSelectorLabels" . | nindent 12 }}
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+---
+# 4) PostgreSQL ingress: only the API of the SAME release/namespace.
+#    (No egress rule: the default deny above blocks all its outbound traffic.)
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "taskapi.dbname" . }}-ingress
+  labels:
+    {{- include "taskapi.labels" . | nindent 4 }}
+spec:
+  description: "PostgreSQL: only reachable from the API pods, on 5432"
+  endpointSelector:
+    matchLabels:
+      {{- include "taskapi.dbSelectorLabels" . | nindent 6 }}
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            {{- include "taskapi.apiSelectorLabels" . | nindent 12 }}
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+{{- end }}

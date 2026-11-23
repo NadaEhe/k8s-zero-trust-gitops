@@ -1,0 +1,40 @@
+# Promote to prod = copy the image tag that runs in dev into environments/prod.
+# Same image, no rebuild ("build once, deploy many"). Triggered by a human.
+name: Promote to prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to promote (empty = the tag currently deployed in dev)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    environment: production   # add required reviewers in Settings > Environments
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Promote
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          DEV_TAG="$(sed -nE 's/^  tag: "(.*)"/\1/p' environments/dev/values.yaml)"
+          TAG="${INPUT_TAG:-$DEV_TAG}"
+          [[ "$TAG" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid tag: $TAG"; exit 1; }
+          sed -i -E "s/^(  tag: ).*/\1\"${TAG}\"/" environments/prod/values.yaml
+          grep -q "tag: \"${TAG}\"" environments/prod/values.yaml
+          if git diff --quiet; then echo "prod already runs ${TAG}"; exit 0; fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "deploy(prod): promote taskapi ${TAG}"
+          git push origin HEAD:main
+          echo "### Promoted \`${TAG}\` to **prod**. Argo CD will sync it." >> "$GITHUB_STEP_SUMMARY"

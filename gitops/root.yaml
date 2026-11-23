@@ -1,0 +1,24 @@
+# The ONLY object applied by hand (by scripts/bootstrap.sh).
+# "App of apps": this Application deploys every Application found in gitops/apps/.
+# From here on, Git is the single source of truth: to change the cluster,
+# you change Git.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/NadaEhe/k8s-zero-trust-gitops.git
+    targetRevision: main
+    path: gitops/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

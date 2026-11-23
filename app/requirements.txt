@@ -1,0 +1,7 @@
+# Runtime dependencies (pinned for reproducible images; Dependabot keeps them fresh)
+fastapi==0.165.0
+uvicorn==0.54.0
+psycopg[binary]==3.3.9
+psycopg-pool==3.3.3
+prometheus-client==0.26.0
+pydantic==2.14.4

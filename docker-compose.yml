@@ -1,0 +1,30 @@
+# Local development without Kubernetes:
+#   docker compose up --build        -> API on http://localhost:8000/api/docs
+#   docker compose up -d db          -> only PostgreSQL, to run `pytest` in app/
+services:
+  db:
+    image: postgres:18.7-trixie
+    environment:
+      POSTGRES_DB: taskapi
+      POSTGRES_USER: taskapi
+      POSTGRES_PASSWORD: taskapi  # local-only password, never used in the cluster
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taskapi -d taskapi"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./app
+    environment:
+      APP_ENV: compose
+      DB_HOST: db
+      DB_PASSWORD: taskapi
+    ports:
+      - "8000:8000"
+      - "9090:9090"
+    depends_on:
+      db:
+        condition: service_healthy

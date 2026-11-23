@@ -1,0 +1,81 @@
+# Prometheus + Alertmanager + Grafana (kube-prometheus-stack).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 93.9.0
+    helm:
+      releaseName: kube-prometheus-stack
+      valuesObject:
+        # CRDs are installed once at bootstrap (prometheus-operator-crds chart),
+        # because Cilium needs them before Argo CD even exists.
+        crds:
+          enabled: false
+
+        # kind exposes no metrics for these control-plane parts, and there is
+        # no kube-proxy at all (Cilium replaced it): don't scrape them, or
+        # Prometheus would fire "target down" alerts forever.
+        kubeProxy:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+
+        prometheus:
+          prometheusSpec:
+            # Pick up ServiceMonitors / PrometheusRules from ALL namespaces,
+            # not only the ones created by this Helm release.
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+            retention: 2d
+            resources:
+              requests:
+                cpu: 100m
+                memory: 400Mi
+
+        alertmanager:
+          alertmanagerSpec:
+            resources:
+              requests:
+                cpu: 10m
+                memory: 32Mi
+
+        grafana:
+          # Password from a Secret generated at bootstrap (never in Git).
+          admin:
+            existingSecret: grafana-admin
+            userKey: admin-user
+            passwordKey: admin-password
+          sidecar:
+            dashboards:
+              enabled: true
+              searchNamespace: ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Server-side apply: avoids the 256 KB annotation limit of client-side
+      # apply on the big dashboard ConfigMaps.
+      - ServerSideApply=true

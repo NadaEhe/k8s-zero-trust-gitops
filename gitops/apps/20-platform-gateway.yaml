@@ -1,0 +1,23 @@
+# The shared Gateway + routes to the platform UIs (Argo CD, Grafana, Hubble).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-gateway
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: platform
+  source:
+    repoURL: https://github.com/NadaEhe/k8s-zero-trust-gitops.git
+    targetRevision: main
+    path: gitops/platform/gateway
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gateway-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
