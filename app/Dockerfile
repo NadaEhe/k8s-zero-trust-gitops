@@ -13,7 +13,9 @@ ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN python -m venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 COPY requirements.txt .
-RUN pip install --require-virtualenv -r requirements.txt
+RUN pip install --require-virtualenv -r requirements.txt \
+ # pip is only needed to BUILD: remove it (and its vendored libraries) from the venv.
+ && pip uninstall --yes pip
 
 FROM ${PYTHON_IMAGE} AS runtime
 ARG APP_VERSION=dev
@@ -22,8 +24,16 @@ LABEL org.opencontainers.image.title="taskapi" \
       org.opencontainers.image.source="https://github.com/NadaEhe/k8s-zero-trust-gitops" \
       org.opencontainers.image.licenses="MIT"
 
-# Fixed numeric UID/GID so Kubernetes can check runAsNonRoot without a lookup.
-RUN groupadd --system --gid 10001 app \
+# - Apply Debian security updates published after the base image was built.
+# - Remove pip/setuptools from the system Python: no package manager at runtime,
+#   so an attacker inside the container cannot install tools, and the vendored
+#   libraries of pip disappear from the vulnerability scan.
+# - Fixed numeric UID/GID so Kubernetes can check runAsNonRoot without a lookup.
+RUN apt-get update \
+ && apt-get upgrade --yes --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/* \
+ && (python -m pip uninstall --yes pip setuptools wheel || true) \
+ && groupadd --system --gid 10001 app \
  && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
 
 ENV PATH=/opt/venv/bin:$PATH \
