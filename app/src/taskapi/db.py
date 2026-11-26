@@ -46,6 +46,9 @@ class Database:
         self.pool.close()
 
     def ensure_schema(self) -> None:
+        # Runs the CREATE TABLE once, then is a no-op (cached flag). Called by
+        # /readyz and by every query, so the app works even if nothing has
+        # called /readyz yet (e.g. with docker compose).
         if self.schema_ready:
             return
         with self.pool.connection() as conn:
@@ -59,6 +62,7 @@ class Database:
 
     # --- tasks -----------------------------------------------------------
     def list_tasks(self, limit: int) -> list[dict[str, Any]]:
+        self.ensure_schema()
         with self.pool.connection() as conn:
             cur = conn.execute(
                 "SELECT id, title, done, created_at FROM tasks ORDER BY id DESC LIMIT %s",
@@ -67,6 +71,7 @@ class Database:
             return list(cur.fetchall())
 
     def get_task(self, task_id: int) -> dict[str, Any] | None:
+        self.ensure_schema()
         with self.pool.connection() as conn:
             cur = conn.execute(
                 "SELECT id, title, done, created_at FROM tasks WHERE id = %s", (task_id,)
@@ -74,6 +79,7 @@ class Database:
             return cur.fetchone()
 
     def create_task(self, title: str) -> dict[str, Any]:
+        self.ensure_schema()
         with self.pool.connection() as conn:
             cur = conn.execute(
                 "INSERT INTO tasks (title) VALUES (%s) RETURNING id, title, done, created_at",
@@ -84,6 +90,7 @@ class Database:
             return row
 
     def set_done(self, task_id: int, done: bool) -> dict[str, Any] | None:
+        self.ensure_schema()
         with self.pool.connection() as conn:
             cur = conn.execute(
                 "UPDATE tasks SET done = %s WHERE id = %s RETURNING id, title, done, created_at",
@@ -92,6 +99,7 @@ class Database:
             return cur.fetchone()
 
     def delete_task(self, task_id: int) -> bool:
+        self.ensure_schema()
         with self.pool.connection() as conn:
             cur = conn.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
             return cur.rowcount > 0

@@ -76,3 +76,17 @@ def test_metrics_use_route_templates_not_raw_paths(client: TestClient) -> None:
     }
     assert "/api/tasks/{task_id}" in routes
     assert "/api/tasks/424242" not in routes
+
+
+def test_works_before_any_readiness_check() -> None:
+    """With docker compose nothing calls /readyz: the first request must still work."""
+    import psycopg
+
+    from taskapi.config import load_settings
+    from taskapi.main import create_app
+
+    settings = load_settings()
+    with psycopg.connect(settings.conninfo, password=settings.db_password) as conn:
+        conn.execute("DROP TABLE IF EXISTS tasks")
+    with TestClient(create_app(settings)) as fresh:
+        assert fresh.post("/api/tasks", json={"title": "first"}).status_code == 201
