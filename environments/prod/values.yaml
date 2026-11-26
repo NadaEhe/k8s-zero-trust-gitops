@@ -4,7 +4,7 @@
 environment: prod
 
 image:
-  tag: "1.0.0"
+  tag: "sha-c16eeb0"
 
 autoscaling:
   enabled: true
